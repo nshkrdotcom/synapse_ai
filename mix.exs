@@ -47,8 +47,8 @@ defmodule Synapse.AI.MixProject do
   defp deps do
     [
       # Core dependencies (path for dev, will be hex for release)
-      {:altar_ai, path: "../altar_ai"},
-      {:synapse, path: "../synapse"},
+      {:altar_ai, "~> 0.1.0"},
+      {:synapse, "~> 0.1.0"},
       {:jido, "~> 1.0"},
 
       # Test dependencies
