@@ -1,7 +1,10 @@
 defmodule Synapse.AITest do
   use ExUnit.Case, async: true
 
-  alias Synapse.AI
+  setup_all do
+    Code.ensure_loaded?(Synapse.AI)
+    :ok
+  end
 
   describe "setup_telemetry/0" do
     test "sets up telemetry bridge" do

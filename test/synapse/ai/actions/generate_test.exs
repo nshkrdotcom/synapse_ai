@@ -2,7 +2,11 @@ defmodule Synapse.AI.Actions.GenerateTest do
   use ExUnit.Case, async: true
 
   alias Synapse.AI.Actions.Generate
-  alias Synapse.AI.Test.MockAdapter
+
+  setup_all do
+    Code.ensure_loaded?(Generate)
+    :ok
+  end
 
   describe "run/2" do
     test "returns error when prompt is missing" do

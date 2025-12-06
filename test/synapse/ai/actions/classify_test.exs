@@ -3,6 +3,11 @@ defmodule Synapse.AI.Actions.ClassifyTest do
 
   alias Synapse.AI.Actions.Classify
 
+  setup_all do
+    Code.ensure_loaded?(Classify)
+    :ok
+  end
+
   describe "run/2" do
     test "returns error when text is missing" do
       params = %{labels: ["a", "b"]}

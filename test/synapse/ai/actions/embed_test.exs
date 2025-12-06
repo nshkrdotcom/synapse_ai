@@ -3,6 +3,11 @@ defmodule Synapse.AI.Actions.EmbedTest do
 
   alias Synapse.AI.Actions.Embed
 
+  setup_all do
+    Code.ensure_loaded?(Embed)
+    :ok
+  end
+
   describe "run/2" do
     test "returns error when text and texts are missing" do
       params = %{}

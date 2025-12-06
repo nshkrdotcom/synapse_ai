@@ -13,7 +13,7 @@ defmodule Synapse.AI.Providers.GeminiSDKTest do
   describe "chat_completion/3" do
     test "successfully generates text from prompt" do
       # Mock the adapter
-      mock_response = %Altar.AI.Response{
+      _mock_response = %Altar.AI.Response{
         content: "Hello, world!",
         provider: :gemini,
         model: "gemini-pro",

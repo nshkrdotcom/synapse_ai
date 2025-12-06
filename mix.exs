@@ -52,6 +52,7 @@ defmodule Synapse.AI.MixProject do
       {:jido, "~> 1.0"},
 
       # Test dependencies
+      {:stream_data, "~> 1.0", only: :test},
       {:supertester, path: "../supertester", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
