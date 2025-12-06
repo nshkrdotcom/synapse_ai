@@ -94,7 +94,7 @@ defmodule Synapse.AI.MixProject do
       homepage_url: @source_url,
       logo: "assets/synapse_ai.svg",
       assets: %{"assets" => "assets"},
-      extras: ["README.md", "CHANGELOG.md"],
+      extras: ["README.md", "LICENSE", "CHANGELOG.md"],
       groups_for_modules: [
         "Core API": [Synapse.AI],
         Providers: [
