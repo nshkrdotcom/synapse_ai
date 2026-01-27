@@ -8,7 +8,6 @@ defmodule Synapse.AITest do
 
   describe "setup_telemetry/0" do
     test "sets up telemetry bridge" do
-      # Verify function exists
       assert function_exported?(Synapse.AI, :setup_telemetry, 0)
     end
   end

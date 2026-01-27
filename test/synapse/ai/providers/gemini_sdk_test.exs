@@ -11,24 +11,12 @@ defmodule Synapse.AI.Providers.GeminiSDKTest do
   end
 
   describe "chat_completion/3" do
-    test "successfully generates text from prompt" do
-      # Mock the adapter
-      _mock_response = %Altar.AI.Response{
-        content: "Hello, world!",
-        provider: :gemini,
-        model: "gemini-pro",
-        tokens: %{total: 10, prompt: 5, completion: 5},
-        finish_reason: :stop
-      }
-
-      # We'll need to mock Altar.AI.Adapters.Gemini.new and Altar.AI.generate
-      # For now, this is a structural test
+    test "function exists with correct arity" do
       assert is_function(&GeminiSDK.chat_completion/3)
     end
 
     test "extracts prompt from messages format" do
       params = %{messages: [%{content: "Hello"}]}
-      # Test would call chat_completion with mocked adapter
       assert is_map(params)
     end
   end
@@ -42,7 +30,7 @@ defmodule Synapse.AI.Providers.GeminiSDKTest do
 
   describe "translate_error/2" do
     test "returns error unchanged" do
-      error = %Jido.Error{type: :test, message: "test"}
+      error = Jido.Error.execution_error("test")
       assert GeminiSDK.translate_error(error, %{}) == error
     end
   end
@@ -63,5 +51,19 @@ defmodule Synapse.AI.Providers.GeminiSDKTest do
       assert is_list(config)
       assert config[:model] == "gemini-pro"
     end
+  end
+
+  describe "portfolio_adapter/0" do
+    test "returns the portfolio_index adapter module" do
+      assert GeminiSDK.portfolio_adapter() == PortfolioIndex.Adapters.LLM.Gemini
+    end
+  end
+
+  test "implements Synapse.LLMProvider behaviour" do
+    assert function_exported?(GeminiSDK, :supported_features, 0)
+    assert function_exported?(GeminiSDK, :default_config, 0)
+    assert function_exported?(GeminiSDK, :prepare_body, 3)
+    assert function_exported?(GeminiSDK, :parse_response, 2)
+    assert function_exported?(GeminiSDK, :translate_error, 2)
   end
 end

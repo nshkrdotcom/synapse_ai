@@ -36,28 +36,40 @@ defmodule Synapse.AI.TelemetryTest do
     test "returns list of forwarded events" do
       events = Telemetry.forwarded_events()
       assert is_list(events)
-      assert [:altar, :ai, :generate, :start] in events
-      assert [:altar, :ai, :generate, :stop] in events
-      assert [:altar, :ai, :embed, :start] in events
+      assert [:portfolio_index, :llm, :complete, :start] in events
+      assert [:portfolio_index, :llm, :complete, :stop] in events
+      assert [:portfolio_index, :embedder, :embed] in events
     end
   end
 
   describe "synapse_event/1" do
-    test "converts altar event to synapse event" do
-      altar_event = [:altar, :ai, :generate, :stop]
+    test "converts portfolio_index LLM event to synapse event" do
+      portfolio_event = [:portfolio_index, :llm, :complete, :stop]
       synapse_event = [:synapse, :ai, :generate, :stop]
 
-      assert Telemetry.synapse_event(altar_event) == synapse_event
+      assert Telemetry.synapse_event(portfolio_event) == synapse_event
     end
 
-    test "returns non-altar events unchanged" do
+    test "converts portfolio_index embedder event to synapse event" do
+      portfolio_event = [:portfolio_index, :embedder, :embed]
+      synapse_event = [:synapse, :ai, :embed, :stop]
+
+      assert Telemetry.synapse_event(portfolio_event) == synapse_event
+    end
+
+    test "falls back for unmapped portfolio_index events" do
+      other_event = [:portfolio_index, :custom, :event]
+      assert Telemetry.synapse_event(other_event) == [:synapse, :ai, :custom, :event]
+    end
+
+    test "returns non-portfolio events unchanged" do
       other_event = [:some, :other, :event]
       assert Telemetry.synapse_event(other_event) == other_event
     end
   end
 
   describe "handle_event/4" do
-    test "forwards altar events to synapse namespace" do
+    test "forwards portfolio_index events to synapse namespace" do
       # Set up a test handler to capture forwarded events
       test_pid = self()
 
@@ -74,7 +86,7 @@ defmodule Synapse.AI.TelemetryTest do
 
       # Trigger the handle_event function
       Telemetry.handle_event(
-        [:altar, :ai, :test, :event],
+        [:portfolio_index, :test, :event],
         %{duration: 100},
         %{test: true},
         nil
@@ -87,7 +99,7 @@ defmodule Synapse.AI.TelemetryTest do
       assert measurements.duration == 100
       assert metadata.test == true
       assert metadata.source == :synapse_ai
-      assert metadata.forwarded_from == [:altar, :ai, :test, :event]
+      assert metadata.forwarded_from == [:portfolio_index, :test, :event]
 
       # Cleanup
       :telemetry.detach(handler_id)

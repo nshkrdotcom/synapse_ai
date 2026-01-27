@@ -2,6 +2,8 @@ defmodule Synapse.AI.Actions.Generate do
   @moduledoc """
   Jido Action for AI text generation in Synapse workflows.
 
+  Uses portfolio_index LLM adapters for text generation.
+
   ## Usage in Workflow
 
       Spec.new(
@@ -21,7 +23,7 @@ defmodule Synapse.AI.Actions.Generate do
   ## Parameters
 
   - `:prompt` - The text prompt for generation (required)
-  - `:adapter` - Which adapter to use: `:gemini`, `:claude`, `:codex`, `:composite` (default: `:composite`)
+  - `:adapter` - Which adapter to use: `:gemini`, `:claude`, `:codex`, `:openai`, `:ollama`, `:composite` (default: `:composite`)
   - `:opts` - Additional options to pass to the adapter (optional)
 
   ## Returns
@@ -41,39 +43,96 @@ defmodule Synapse.AI.Actions.Generate do
       opts: [type: :keyword_list, required: false]
     ]
 
+  alias Synapse.AI.Providers.CompositeSDK
+
+  @adapter_map %{
+    gemini: PortfolioIndex.Adapters.LLM.Gemini,
+    claude: PortfolioIndex.Adapters.LLM.Anthropic,
+    codex: PortfolioIndex.Adapters.LLM.Codex,
+    openai: PortfolioIndex.Adapters.LLM.OpenAI,
+    ollama: PortfolioIndex.Adapters.LLM.Ollama
+  }
+
   @impl true
-  def run(params, _context) do
-    adapter = get_adapter(params[:adapter])
-    prompt = params[:prompt]
+  def run(%{prompt: prompt} = params, _context) when is_binary(prompt) do
+    adapter = resolve_adapter(params[:adapter] || :composite)
+    opts = Map.get(params, :opts, [])
+    do_generate(adapter, prompt, opts)
+  end
 
-    unless prompt do
-      {:error, %Jido.Error{type: :validation_error, message: "prompt is required"}}
+  def run(_params, _context) do
+    {:error, Jido.Error.validation_error("prompt is required")}
+  end
+
+  @doc """
+  Resolves an adapter atom to its portfolio_index adapter module.
+  """
+  def resolve_adapter(:gemini), do: PortfolioIndex.Adapters.LLM.Gemini
+  def resolve_adapter(:claude), do: PortfolioIndex.Adapters.LLM.Anthropic
+  def resolve_adapter(:codex), do: PortfolioIndex.Adapters.LLM.Codex
+  def resolve_adapter(:openai), do: PortfolioIndex.Adapters.LLM.OpenAI
+  def resolve_adapter(:ollama), do: PortfolioIndex.Adapters.LLM.Ollama
+  def resolve_adapter(:composite), do: :composite
+  def resolve_adapter(nil), do: :composite
+
+  def resolve_adapter(module) when is_atom(module) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :complete, 2) do
+      module
     else
-      opts = Map.get(params, :opts, [])
-
-      case Altar.AI.generate(adapter, prompt, opts) do
-        {:ok, response} ->
-          {:ok,
-           %{
-             content: response.content,
-             model: response.model,
-             tokens: response.tokens
-           }}
-
-        {:error, error} ->
-          {:error, error}
-      end
+      :composite
     end
   end
 
-  defp get_adapter(:gemini), do: Altar.AI.Adapters.Gemini.new()
-  defp get_adapter(:claude), do: Altar.AI.Adapters.Claude.new()
-  defp get_adapter(:codex), do: Altar.AI.Adapters.Codex.new()
-  defp get_adapter(:composite), do: Altar.AI.Adapters.Composite.default()
-  defp get_adapter(nil), do: Altar.AI.Adapters.Composite.default()
+  @doc """
+  Returns the adapter map for lookup.
+  """
+  def adapter_map, do: @adapter_map
 
-  defp get_adapter(adapter) when is_struct(adapter) do
-    # Allow passing an adapter struct directly
-    adapter
+  defp do_generate(:composite, prompt, opts) do
+    case CompositeSDK.chat_completion(%{prompt: prompt}, opts, []) do
+      {:ok, response} -> {:ok, format_composite_response(response)}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp do_generate(adapter_module, prompt, opts) do
+    messages = [%{role: :user, content: prompt}]
+
+    case adapter_module.complete(messages, opts) do
+      {:ok, response} -> {:ok, format_adapter_response(response)}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp format_composite_response(response) do
+    %{
+      content: response.content,
+      model: get_in(response, [:metadata, :model]) || "unknown",
+      tokens: %{
+        total: get_in(response, [:metadata, :total_tokens]) || 0,
+        prompt: get_in(response, [:metadata, :prompt_tokens]) || 0,
+        completion: get_in(response, [:metadata, :completion_tokens]) || 0
+      }
+    }
+  end
+
+  defp format_adapter_response(response) do
+    %{
+      content: Map.get(response, :content, ""),
+      model: Map.get(response, :model, "unknown"),
+      tokens: %{
+        total:
+          get_in_usage(response, :input_tokens, 0) + get_in_usage(response, :output_tokens, 0),
+        prompt: get_in_usage(response, :input_tokens, 0),
+        completion: get_in_usage(response, :output_tokens, 0)
+      }
+    }
+  end
+
+  defp get_in_usage(response, key, default) do
+    case Map.get(response, :usage) do
+      %{} = usage -> Map.get(usage, key, default)
+      _ -> default
+    end
   end
 end

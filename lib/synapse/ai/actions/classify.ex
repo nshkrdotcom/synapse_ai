@@ -2,7 +2,8 @@ defmodule Synapse.AI.Actions.Classify do
   @moduledoc """
   Jido Action for AI classification in Synapse workflows.
 
-  Classifies text into one of the provided labels using AI.
+  Classifies text into one of the provided labels using portfolio_index LLM adapters.
+  Uses a structured prompt to get classification results from the LLM.
 
   ## Usage in Workflow
 
@@ -25,7 +26,7 @@ defmodule Synapse.AI.Actions.Classify do
 
   - `:text` - The text to classify (required)
   - `:labels` - List of possible classification labels (required)
-  - `:adapter` - Which adapter to use: `:gemini`, `:claude`, `:codex`, `:composite` (default: `:composite`)
+  - `:adapter` - Which adapter to use: `:gemini`, `:claude`, `:codex`, `:openai`, `:ollama`, `:composite` (default: `:composite`)
   - `:opts` - Additional options to pass to the adapter (optional)
 
   ## Returns
@@ -48,44 +49,84 @@ defmodule Synapse.AI.Actions.Classify do
 
   @impl true
   def run(params, _context) do
-    adapter = get_adapter(params[:adapter])
     text = params[:text]
     labels = params[:labels]
 
     cond do
       is_nil(text) ->
-        {:error, %Jido.Error{type: :validation_error, message: "text is required"}}
+        {:error, Jido.Error.validation_error("text is required")}
 
       is_nil(labels) or labels == [] ->
-        {:error,
-         %Jido.Error{type: :validation_error, message: "labels is required and must be non-empty"}}
+        {:error, Jido.Error.validation_error("labels is required and must be non-empty")}
 
       true ->
+        adapter_module = resolve_adapter(params[:adapter])
         opts = Map.get(params, :opts, [])
-
-        case Altar.AI.classify(adapter, text, labels, opts) do
-          {:ok, classification} ->
-            {:ok,
-             %{
-               label: classification.label,
-               confidence: classification.confidence,
-               all_scores: classification.all_scores
-             }}
-
-          {:error, error} ->
-            {:error, error}
-        end
+        classify_with_llm(adapter_module, text, labels, opts)
     end
   end
 
-  defp get_adapter(:gemini), do: Altar.AI.Adapters.Gemini.new()
-  defp get_adapter(:claude), do: Altar.AI.Adapters.Claude.new()
-  defp get_adapter(:codex), do: Altar.AI.Adapters.Codex.new()
-  defp get_adapter(:composite), do: Altar.AI.Adapters.Composite.default()
-  defp get_adapter(nil), do: Altar.AI.Adapters.Composite.default()
+  @doc """
+  Resolves an adapter atom to its portfolio_index adapter module.
+  """
+  def resolve_adapter(:gemini), do: PortfolioIndex.Adapters.LLM.Gemini
+  def resolve_adapter(:claude), do: PortfolioIndex.Adapters.LLM.Anthropic
+  def resolve_adapter(:codex), do: PortfolioIndex.Adapters.LLM.Codex
+  def resolve_adapter(:openai), do: PortfolioIndex.Adapters.LLM.OpenAI
+  def resolve_adapter(:ollama), do: PortfolioIndex.Adapters.LLM.Ollama
+  def resolve_adapter(:composite), do: PortfolioIndex.Adapters.LLM.Gemini
+  def resolve_adapter(nil), do: PortfolioIndex.Adapters.LLM.Gemini
 
-  defp get_adapter(adapter) when is_struct(adapter) do
-    # Allow passing an adapter struct directly
-    adapter
+  def resolve_adapter(module) when is_atom(module) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :complete, 2) do
+      module
+    else
+      PortfolioIndex.Adapters.LLM.Gemini
+    end
+  end
+
+  defp classify_with_llm(adapter_module, text, labels, opts) do
+    labels_str = Enum.join(labels, ", ")
+
+    prompt =
+      "Classify the following text into exactly one of these labels: #{labels_str}\n\n" <>
+        "Text: #{text}\n\n" <>
+        "Respond with ONLY the label, nothing else."
+
+    messages = [%{role: :user, content: prompt}]
+
+    case adapter_module.complete(messages, opts) do
+      {:ok, response} ->
+        raw_label = response |> Map.get(:content, "") |> String.trim()
+        matched_label = find_best_label(raw_label, labels)
+
+        {:ok,
+         %{
+           label: matched_label,
+           confidence: if(matched_label == raw_label, do: 0.9, else: 0.7),
+           all_scores:
+             Enum.into(labels, %{}, fn label ->
+               score = if label == matched_label, do: 0.9, else: 0.1 / max(length(labels) - 1, 1)
+               {label, score}
+             end)
+         }}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp find_best_label(raw, labels) do
+    # Exact match first
+    exact = Enum.find(labels, fn l -> String.downcase(l) == String.downcase(raw) end)
+
+    if exact do
+      exact
+    else
+      # Substring match
+      Enum.find(labels, List.first(labels), fn l ->
+        String.contains?(String.downcase(raw), String.downcase(l))
+      end)
+    end
   end
 end

@@ -11,18 +11,15 @@ defmodule Synapse.AI.Actions.EmbedTest do
   describe "run/2" do
     test "returns error when text and texts are missing" do
       params = %{}
-      assert {:error, %Jido.Error{type: :validation_error, message: msg}} = Embed.run(params, %{})
+      assert {:error, %Jido.Error.ValidationError{message: msg}} = Embed.run(params, %{})
       assert msg =~ "text or texts"
     end
 
     test "successfully embeds with text parameter" do
-      # This test would require mocking Altar.AI.batch_embed
-      # For now, verify the function exists and has correct arity
       assert function_exported?(Embed, :run, 2)
     end
 
     test "successfully embeds with texts parameter" do
-      # Structural test
       params = %{texts: ["text1", "text2"]}
       assert is_map(params)
     end
@@ -40,6 +37,18 @@ defmodule Synapse.AI.Actions.EmbedTest do
     test "accepts opts parameter" do
       params = %{text: "test", opts: [dimensions: 256]}
       assert is_map(params)
+    end
+  end
+
+  describe "resolve_adapter/1" do
+    test "resolves embedder adapter from atom" do
+      assert Embed.resolve_adapter(:gemini) == PortfolioIndex.Adapters.Embedder.Gemini
+      assert Embed.resolve_adapter(:openai) == PortfolioIndex.Adapters.Embedder.OpenAI
+    end
+
+    test "falls back to appropriate embedder for LLM-only adapters" do
+      assert Embed.resolve_adapter(:claude) == PortfolioIndex.Adapters.Embedder.Gemini
+      assert Embed.resolve_adapter(:codex) == PortfolioIndex.Adapters.Embedder.OpenAI
     end
   end
 end

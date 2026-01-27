@@ -1,9 +1,9 @@
 defmodule Synapse.AI.Providers.GeminiSDK do
   @moduledoc """
-  Synapse LLMProvider backed by gemini_ex SDK via altar_ai.
+  Synapse LLMProvider backed by Google Gemini via portfolio_index.
 
-  Unlike the HTTP-based Synapse.Providers.Gemini, this uses the
-  full gemini_ex SDK for richer features like caching, streaming, etc.
+  Delegates to `PortfolioIndex.Adapters.LLM.Gemini` for the actual LLM calls
+  while implementing the `Synapse.LLMProvider` behaviour contract.
 
   ## Configuration
 
@@ -11,7 +11,7 @@ defmodule Synapse.AI.Providers.GeminiSDK do
         profiles: %{
           gemini_sdk: [
             provider_module: Synapse.AI.Providers.GeminiSDK,
-            # No base_url needed - uses SDK
+            model: "gemini-pro"
           ]
         }
 
@@ -28,17 +28,18 @@ defmodule Synapse.AI.Providers.GeminiSDK do
 
   require Logger
 
+  @adapter PortfolioIndex.Adapters.LLM.Gemini
+
   @impl true
   def prepare_body(params, _profile_config, _global_config) do
-    # Not needed for SDK - we process directly
     params
   end
 
   def chat_completion(params, profile_config, _global_config) do
-    adapter = Altar.AI.Adapters.Gemini.new(profile_config)
-    prompt = extract_prompt(params)
+    messages = build_messages(params)
+    opts = Keyword.merge(default_config(), profile_config)
 
-    case Altar.AI.generate(adapter, prompt, params) do
+    case @adapter.complete(messages, opts) do
       {:ok, response} -> {:ok, to_synapse_response(response)}
       {:error, error} -> {:error, to_synapse_error(error)}
     end
@@ -46,13 +47,11 @@ defmodule Synapse.AI.Providers.GeminiSDK do
 
   @impl true
   def parse_response(response, _metadata) do
-    # Response already normalized by altar_ai
     {:ok, response}
   end
 
   @impl true
   def translate_error(error, _metadata) do
-    # Error already normalized by altar_ai
     error
   end
 
@@ -66,44 +65,59 @@ defmodule Synapse.AI.Providers.GeminiSDK do
     [model: "gemini-pro"]
   end
 
-  defp extract_prompt(params) do
+  @doc """
+  Returns the underlying portfolio_index adapter module.
+  """
+  def portfolio_adapter, do: @adapter
+
+  defp build_messages(params) do
+    prompt = extract_prompt(params)
+
     case params do
-      %{prompt: prompt} when is_binary(prompt) ->
-        prompt
-
-      %{messages: [%{content: content} | _]} when is_binary(content) ->
-        content
-
-      %{"prompt" => prompt} when is_binary(prompt) ->
-        prompt
-
-      %{"messages" => [%{"content" => content} | _]} when is_binary(content) ->
-        content
+      %{messages: messages} when is_list(messages) ->
+        messages
 
       _ ->
-        ""
+        [%{role: :user, content: prompt}]
     end
   end
 
-  defp to_synapse_response(%Altar.AI.Response{} = response) do
+  defp extract_prompt(params) do
+    case params do
+      %{prompt: prompt} when is_binary(prompt) -> prompt
+      %{messages: [%{content: content} | _]} when is_binary(content) -> content
+      %{"prompt" => prompt} when is_binary(prompt) -> prompt
+      %{"messages" => [%{"content" => content} | _]} when is_binary(content) -> content
+      _ -> ""
+    end
+  end
+
+  defp to_synapse_response(response) when is_map(response) do
     %{
-      content: response.content,
+      content: Map.get(response, :content, ""),
       metadata: %{
-        provider_id: to_string(response.provider),
-        model: response.model,
-        total_tokens: response.tokens.total,
-        prompt_tokens: response.tokens.prompt,
-        completion_tokens: response.tokens.completion,
-        finish_reason: to_string(response.finish_reason)
+        provider_id: "gemini",
+        model: Map.get(response, :model, "gemini-pro"),
+        total_tokens:
+          get_in_usage(response, :input_tokens, 0) + get_in_usage(response, :output_tokens, 0),
+        prompt_tokens: get_in_usage(response, :input_tokens, 0),
+        completion_tokens: get_in_usage(response, :output_tokens, 0),
+        finish_reason: to_string(Map.get(response, :finish_reason, :stop))
       }
     }
   end
 
-  defp to_synapse_error(%Altar.AI.Error{} = error) do
-    %Jido.Error{
-      type: error.type,
-      message: error.message,
-      details: error.details
-    }
+  defp get_in_usage(response, key, default) do
+    case Map.get(response, :usage) do
+      %{} = usage -> Map.get(usage, key, default)
+      _ -> default
+    end
+  end
+
+  defp to_synapse_error(error) do
+    case error do
+      %{__exception__: true} = e -> e
+      reason -> Jido.Error.execution_error(inspect(reason))
+    end
   end
 end

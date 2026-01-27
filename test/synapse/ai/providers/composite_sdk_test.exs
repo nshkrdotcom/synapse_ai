@@ -38,8 +38,34 @@ defmodule Synapse.AI.Providers.CompositeSDKTest do
 
   describe "translate_error/2" do
     test "returns error unchanged" do
-      error = %Jido.Error{type: :test, message: "test"}
+      error = Jido.Error.execution_error("test")
       assert CompositeSDK.translate_error(error, %{}) == error
+    end
+  end
+
+  describe "adapter_map/0" do
+    test "returns map of adapter atoms to portfolio_index modules" do
+      map = CompositeSDK.adapter_map()
+      assert is_map(map)
+      assert map[:gemini] == PortfolioIndex.Adapters.LLM.Gemini
+      assert map[:claude] == PortfolioIndex.Adapters.LLM.Anthropic
+      assert map[:codex] == PortfolioIndex.Adapters.LLM.Codex
+      assert map[:openai] == PortfolioIndex.Adapters.LLM.OpenAI
+      assert map[:ollama] == PortfolioIndex.Adapters.LLM.Ollama
+    end
+  end
+
+  describe "resolve_adapter/1" do
+    test "resolves known adapter atoms" do
+      assert CompositeSDK.resolve_adapter(:gemini) == PortfolioIndex.Adapters.LLM.Gemini
+      assert CompositeSDK.resolve_adapter(:claude) == PortfolioIndex.Adapters.LLM.Anthropic
+      assert CompositeSDK.resolve_adapter(:codex) == PortfolioIndex.Adapters.LLM.Codex
+      assert CompositeSDK.resolve_adapter(:openai) == PortfolioIndex.Adapters.LLM.OpenAI
+      assert CompositeSDK.resolve_adapter(:ollama) == PortfolioIndex.Adapters.LLM.Ollama
+    end
+
+    test "returns nil for unknown adapter" do
+      assert CompositeSDK.resolve_adapter(:unknown) == nil
     end
   end
 end

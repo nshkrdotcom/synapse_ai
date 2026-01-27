@@ -1,9 +1,9 @@
 defmodule Synapse.AI.Providers.CompositeSDK do
   @moduledoc """
-  Synapse LLMProvider with automatic fallback across all available SDKs.
+  Synapse LLMProvider with automatic fallback across all available portfolio adapters.
 
-  Uses Altar.AI.Adapters.Composite under the hood for cascading provider support.
-  This provider automatically falls back to the next available provider if one fails.
+  Tries providers in configured fallback order until one succeeds.
+  Uses portfolio_index LLM adapters for the actual calls.
 
   ## Configuration
 
@@ -12,17 +12,9 @@ defmodule Synapse.AI.Providers.CompositeSDK do
           composite: [
             provider_module: Synapse.AI.Providers.CompositeSDK,
             # Optional: specify fallback order
-            fallback_order: [:gemini, :claude, :codex]
+            fallback_order: [:gemini, :claude, :codex, :openai, :ollama]
           ]
         }
-
-  ## Examples
-
-      iex> params = %{prompt: "Hello, world!"}
-      iex> profile_config = []
-      iex> {:ok, response} = Synapse.AI.Providers.CompositeSDK.chat_completion(params, profile_config, [])
-      iex> is_binary(response.content)
-      true
 
   ## Automatic Fallback
 
@@ -30,6 +22,8 @@ defmodule Synapse.AI.Providers.CompositeSDK do
   1. Gemini (if configured)
   2. Claude (if configured)
   3. Codex (if configured)
+  4. OpenAI (if configured)
+  5. Ollama (if configured)
 
   If all providers fail, it returns the last error encountered.
   """
@@ -38,37 +32,39 @@ defmodule Synapse.AI.Providers.CompositeSDK do
 
   require Logger
 
+  @adapter_map %{
+    gemini: PortfolioIndex.Adapters.LLM.Gemini,
+    claude: PortfolioIndex.Adapters.LLM.Anthropic,
+    codex: PortfolioIndex.Adapters.LLM.Codex,
+    openai: PortfolioIndex.Adapters.LLM.OpenAI,
+    ollama: PortfolioIndex.Adapters.LLM.Ollama
+  }
+
   @impl true
   def prepare_body(params, _profile_config, _global_config) do
-    # Not needed for SDK - we process directly
     params
   end
 
   def chat_completion(params, profile_config, _global_config) do
-    adapter = build_composite_adapter(profile_config)
-    prompt = extract_prompt(params)
+    fallback_order = Keyword.get(profile_config, :fallback_order, [:gemini, :claude, :codex])
+    messages = build_messages(params)
+    opts = Keyword.drop(profile_config, [:fallback_order])
 
-    case Altar.AI.generate(adapter, prompt, params) do
-      {:ok, response} -> {:ok, to_synapse_response(response)}
-      {:error, error} -> {:error, to_synapse_error(error)}
-    end
+    try_adapters(fallback_order, messages, opts, nil)
   end
 
   @impl true
   def parse_response(response, _metadata) do
-    # Response already normalized by altar_ai
     {:ok, response}
   end
 
   @impl true
   def translate_error(error, _metadata) do
-    # Error already normalized by altar_ai
     error
   end
 
   @impl true
   def supported_features do
-    # Union of all available provider features
     [:streaming, :embeddings, :code_generation, :system_instruction]
   end
 
@@ -77,82 +73,89 @@ defmodule Synapse.AI.Providers.CompositeSDK do
     [fallback_order: [:gemini, :claude, :codex]]
   end
 
-  defp build_composite_adapter(profile_config) do
-    fallback_order = Keyword.get(profile_config, :fallback_order, [:gemini, :claude, :codex])
+  @doc """
+  Returns the map of adapter atoms to portfolio_index adapter modules.
+  """
+  def adapter_map, do: @adapter_map
 
-    adapters =
-      fallback_order
-      |> Enum.map(&build_adapter/1)
-      |> Enum.reject(&is_nil/1)
+  @doc """
+  Resolves an adapter atom to its portfolio_index module.
+  """
+  def resolve_adapter(atom) when is_atom(atom) do
+    Map.get(@adapter_map, atom)
+  end
 
-    case adapters do
-      [] ->
-        # If no adapters configured, use default
-        Altar.AI.Adapters.Composite.default()
+  defp try_adapters([], _messages, _opts, last_error) do
+    error = last_error || Jido.Error.execution_error("All providers failed")
+    {:error, error}
+  end
 
-      adapters ->
-        Altar.AI.Adapters.Composite.new(adapters)
+  defp try_adapters([provider | rest], messages, opts, _last_error) do
+    case Map.get(@adapter_map, provider) do
+      nil ->
+        Logger.warning("Unknown provider #{inspect(provider)} in fallback chain, skipping")
+        try_adapters(rest, messages, opts, nil)
+
+      adapter ->
+        case adapter.complete(messages, opts) do
+          {:ok, response} ->
+            {:ok, to_synapse_response(response, provider)}
+
+          {:error, error} ->
+            Logger.debug("Provider #{inspect(provider)} failed: #{inspect(error)}, trying next")
+            try_adapters(rest, messages, opts, to_synapse_error(error))
+        end
     end
   end
 
-  defp build_adapter(:gemini) do
-    if Altar.AI.Adapters.Gemini.available?() do
-      Altar.AI.Adapters.Gemini.new()
+  defp build_messages(params) do
+    prompt = extract_prompt(params)
+
+    case params do
+      %{messages: messages} when is_list(messages) ->
+        messages
+
+      _ ->
+        [%{role: :user, content: prompt}]
     end
   end
-
-  defp build_adapter(:claude) do
-    if Altar.AI.Adapters.Claude.available?() do
-      Altar.AI.Adapters.Claude.new()
-    end
-  end
-
-  defp build_adapter(:codex) do
-    if Altar.AI.Adapters.Codex.available?() do
-      Altar.AI.Adapters.Codex.new()
-    end
-  end
-
-  defp build_adapter(_), do: nil
 
   defp extract_prompt(params) do
     case params do
-      %{prompt: prompt} when is_binary(prompt) ->
-        prompt
-
-      %{messages: [%{content: content} | _]} when is_binary(content) ->
-        content
-
-      %{"prompt" => prompt} when is_binary(prompt) ->
-        prompt
-
-      %{"messages" => [%{"content" => content} | _]} when is_binary(content) ->
-        content
-
-      _ ->
-        ""
+      %{prompt: prompt} when is_binary(prompt) -> prompt
+      %{messages: [%{content: content} | _]} when is_binary(content) -> content
+      %{"prompt" => prompt} when is_binary(prompt) -> prompt
+      %{"messages" => [%{"content" => content} | _]} when is_binary(content) -> content
+      _ -> ""
     end
   end
 
-  defp to_synapse_response(%Altar.AI.Response{} = response) do
+  defp to_synapse_response(response, provider) when is_map(response) do
     %{
-      content: response.content,
+      content: Map.get(response, :content, ""),
       metadata: %{
-        provider_id: to_string(response.provider),
-        model: response.model,
-        total_tokens: response.tokens.total,
-        prompt_tokens: response.tokens.prompt,
-        completion_tokens: response.tokens.completion,
-        finish_reason: to_string(response.finish_reason)
+        provider_id: to_string(provider),
+        model: Map.get(response, :model, "unknown"),
+        total_tokens:
+          get_in_usage(response, :input_tokens, 0) + get_in_usage(response, :output_tokens, 0),
+        prompt_tokens: get_in_usage(response, :input_tokens, 0),
+        completion_tokens: get_in_usage(response, :output_tokens, 0),
+        finish_reason: to_string(Map.get(response, :finish_reason, :stop))
       }
     }
   end
 
-  defp to_synapse_error(%Altar.AI.Error{} = error) do
-    %Jido.Error{
-      type: error.type,
-      message: error.message,
-      details: error.details
-    }
+  defp get_in_usage(response, key, default) do
+    case Map.get(response, :usage) do
+      %{} = usage -> Map.get(usage, key, default)
+      _ -> default
+    end
+  end
+
+  defp to_synapse_error(error) do
+    case error do
+      %{__exception__: true} = e -> e
+      reason -> Jido.Error.execution_error(inspect(reason))
+    end
   end
 end

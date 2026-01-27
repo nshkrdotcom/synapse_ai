@@ -1,15 +1,17 @@
 defmodule Synapse.AI do
   @moduledoc """
-  Synapse integration for altar_ai.
+  Synapse integration for portfolio_core/portfolio_index.
 
   Provides SDK-backed LLM providers and workflow actions
-  that use altar_ai's unified adapter layer instead of raw HTTP.
+  that use portfolio_index's adapter layer instead of raw HTTP.
 
   ## Benefits over HTTP-based providers
 
   - Full SDK features (caching, streaming, auth management)
   - Automatic fallback chains via Composite adapter
   - Unified error handling
+  - Rate limiting via portfolio_index
+  - 6 provider adapters (Gemini, Claude, Codex, OpenAI, Ollama, VLLM)
   - Shared telemetry with FlowStone (if both used)
   - Type-safe adapter interfaces
 
@@ -37,7 +39,7 @@ defmodule Synapse.AI do
           ],
           composite: [
             provider_module: Synapse.AI.Providers.CompositeSDK,
-            fallback_order: [:gemini, :claude, :codex]
+            fallback_order: [:gemini, :claude, :codex, :openai, :ollama]
           ]
         }
 
@@ -79,7 +81,7 @@ defmodule Synapse.AI do
 
   ## Telemetry
 
-  Enable telemetry forwarding from altar_ai to synapse.ai namespace:
+  Enable telemetry forwarding from portfolio_index to synapse.ai namespace:
 
       # In your application.ex
       def start(_type, _args) do
@@ -89,12 +91,13 @@ defmodule Synapse.AI do
   """
 
   alias Synapse.AI.Providers
+  alias Synapse.AI.Telemetry
 
   @doc """
-  Setup telemetry bridge to forward altar_ai events to synapse.ai namespace.
+  Setup telemetry bridge to forward portfolio_index events to synapse.ai namespace.
   """
   def setup_telemetry do
-    Synapse.AI.Telemetry.attach()
+    Telemetry.attach()
   end
 
   @doc """
@@ -105,33 +108,27 @@ defmodule Synapse.AI do
   ## Examples
 
       iex> Synapse.AI.available_providers()
-      [Synapse.AI.Providers.CompositeSDK, Synapse.AI.Providers.GeminiSDK]
+      [Synapse.AI.Providers.CompositeSDK, Synapse.AI.Providers.GeminiSDK, ...]
   """
   def available_providers do
     providers = []
 
     providers =
-      if Code.ensure_loaded?(Altar.AI.Adapters.Gemini) and
-           function_exported?(Altar.AI.Adapters.Gemini, :available?, 0) and
-           Altar.AI.Adapters.Gemini.available?() do
+      if adapter_loaded?(PortfolioIndex.Adapters.LLM.Gemini) do
         [Providers.GeminiSDK | providers]
       else
         providers
       end
 
     providers =
-      if Code.ensure_loaded?(Altar.AI.Adapters.Claude) and
-           function_exported?(Altar.AI.Adapters.Claude, :available?, 0) and
-           Altar.AI.Adapters.Claude.available?() do
+      if adapter_loaded?(PortfolioIndex.Adapters.LLM.Anthropic) do
         [Providers.ClaudeSDK | providers]
       else
         providers
       end
 
     providers =
-      if Code.ensure_loaded?(Altar.AI.Adapters.Codex) and
-           function_exported?(Altar.AI.Adapters.Codex, :available?, 0) and
-           Altar.AI.Adapters.Codex.available?() do
+      if adapter_loaded?(PortfolioIndex.Adapters.LLM.Codex) do
         [Providers.CodexSDK | providers]
       else
         providers
@@ -162,8 +159,14 @@ defmodule Synapse.AI do
       true
   """
   def ready? do
-    Code.ensure_loaded?(Altar.AI) and
+    Code.ensure_loaded?(PortfolioCore.Ports.LLM) and
+      Code.ensure_loaded?(PortfolioIndex.Adapters.LLM.Gemini) and
       Code.ensure_loaded?(Synapse.LLMProvider) and
       Code.ensure_loaded?(Jido.Action)
+  end
+
+  defp adapter_loaded?(module) do
+    Code.ensure_loaded?(module) and
+      function_exported?(module, :complete, 2)
   end
 end

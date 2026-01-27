@@ -2,7 +2,7 @@ defmodule Synapse.AI.Actions.Embed do
   @moduledoc """
   Jido Action for embedding generation in Synapse workflows.
 
-  Generates vector embeddings for text using AI models.
+  Generates vector embeddings for text using portfolio_index Embedder adapters.
 
   ## Usage in Workflow
 
@@ -24,7 +24,7 @@ defmodule Synapse.AI.Actions.Embed do
 
   - `:text` - A single text to embed (either this or `:texts` required)
   - `:texts` - A list of texts to embed (either this or `:text` required)
-  - `:adapter` - Which adapter to use: `:gemini`, `:claude`, `:codex`, `:composite` (default: `:composite`)
+  - `:adapter` - Which embedder adapter to use: `:gemini`, `:openai` (default: `:gemini`)
   - `:opts` - Additional options to pass to the adapter (optional)
 
   ## Returns
@@ -45,21 +45,44 @@ defmodule Synapse.AI.Actions.Embed do
 
   @impl true
   def run(params, _context) do
-    adapter = get_adapter(params[:adapter])
-    texts = extract_texts(params)
+    case extract_texts(params) do
+      nil -> {:error, Jido.Error.validation_error("text or texts is required")}
+      [] -> {:error, Jido.Error.validation_error("text or texts is required")}
+      texts -> do_embed(texts, resolve_adapter(params[:adapter]), Map.get(params, :opts, []))
+    end
+  end
 
-    if is_nil(texts) or texts == [] do
-      {:error, %Jido.Error{type: :validation_error, message: "text or texts is required"}}
+  defp do_embed(texts, embedder, opts) do
+    case embedder.embed_batch(texts, opts) do
+      {:ok, %{embeddings: embeddings}} ->
+        vectors = Enum.map(embeddings, fn e -> Map.get(e, :vector, e) end)
+        {:ok, %{embeddings: vectors}}
+
+      {:ok, vectors} when is_list(vectors) ->
+        {:ok, %{embeddings: vectors}}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  @doc """
+  Resolves an adapter atom to its portfolio_index embedder module.
+  """
+  def resolve_adapter(:gemini), do: PortfolioIndex.Adapters.Embedder.Gemini
+  def resolve_adapter(:openai), do: PortfolioIndex.Adapters.Embedder.OpenAI
+  # LLM adapter atoms that don't have embedders fall back to Gemini embedder
+  def resolve_adapter(:claude), do: PortfolioIndex.Adapters.Embedder.Gemini
+  def resolve_adapter(:codex), do: PortfolioIndex.Adapters.Embedder.OpenAI
+  def resolve_adapter(:ollama), do: PortfolioIndex.Adapters.Embedder.Gemini
+  def resolve_adapter(:composite), do: PortfolioIndex.Adapters.Embedder.Gemini
+  def resolve_adapter(nil), do: PortfolioIndex.Adapters.Embedder.Gemini
+
+  def resolve_adapter(module) when is_atom(module) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :embed, 2) do
+      module
     else
-      opts = Map.get(params, :opts, [])
-
-      case Altar.AI.batch_embed(adapter, texts, opts) do
-        {:ok, vectors} ->
-          {:ok, %{embeddings: vectors}}
-
-        {:error, error} ->
-          {:error, error}
-      end
+      PortfolioIndex.Adapters.Embedder.Gemini
     end
   end
 
@@ -74,16 +97,5 @@ defmodule Synapse.AI.Actions.Embed do
       true ->
         nil
     end
-  end
-
-  defp get_adapter(:gemini), do: Altar.AI.Adapters.Gemini.new()
-  defp get_adapter(:claude), do: Altar.AI.Adapters.Claude.new()
-  defp get_adapter(:codex), do: Altar.AI.Adapters.Codex.new()
-  defp get_adapter(:composite), do: Altar.AI.Adapters.Composite.default()
-  defp get_adapter(nil), do: Altar.AI.Adapters.Composite.default()
-
-  defp get_adapter(adapter) when is_struct(adapter) do
-    # Allow passing an adapter struct directly
-    adapter
   end
 end

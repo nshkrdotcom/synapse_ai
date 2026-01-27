@@ -1,8 +1,8 @@
 defmodule Synapse.AI.Telemetry do
   @moduledoc """
-  Bridges altar_ai telemetry to Synapse's telemetry namespace.
+  Bridges portfolio_index telemetry to Synapse's telemetry namespace.
 
-  Automatically forwards all altar_ai telemetry events to the synapse.ai namespace,
+  Automatically forwards all portfolio_index telemetry events to the synapse.ai namespace,
   allowing unified monitoring and metrics collection across the Synapse ecosystem.
 
   ## Usage
@@ -12,15 +12,13 @@ defmodule Synapse.AI.Telemetry do
 
   ## Events Forwarded
 
-  All events from the `:altar` namespace are forwarded to `:synapse, :ai`:
+  All events from the `:portfolio_index` namespace are forwarded to `:synapse, :ai`:
 
-  - `[:altar, :ai, :generate, :start]` -> `[:synapse, :ai, :generate, :start]`
-  - `[:altar, :ai, :generate, :stop]` -> `[:synapse, :ai, :generate, :stop]`
-  - `[:altar, :ai, :generate, :exception]` -> `[:synapse, :ai, :generate, :exception]`
-  - `[:altar, :ai, :embed, :start]` -> `[:synapse, :ai, :embed, :start]`
-  - `[:altar, :ai, :embed, :stop]` -> `[:synapse, :ai, :embed, :stop]`
-  - `[:altar, :ai, :classify, :start]` -> `[:synapse, :ai, :classify, :start]`
-  - `[:altar, :ai, :classify, :stop]` -> `[:synapse, :ai, :classify, :stop]`
+  - `[:portfolio_index, :llm, :complete, :start]` -> `[:synapse, :ai, :generate, :start]`
+  - `[:portfolio_index, :llm, :complete, :stop]` -> `[:synapse, :ai, :generate, :stop]`
+  - `[:portfolio_index, :llm, :complete, :exception]` -> `[:synapse, :ai, :generate, :exception]`
+  - `[:portfolio_index, :embedder, :embed]` -> `[:synapse, :ai, :embed, :stop]`
+  - `[:portfolio_index, :embedder, :embed_batch]` -> `[:synapse, :ai, :batch_embed, :stop]`
 
   ## Example: Consuming Events
 
@@ -37,19 +35,26 @@ defmodule Synapse.AI.Telemetry do
   require Logger
 
   @events [
-    [:altar, :ai, :generate, :start],
-    [:altar, :ai, :generate, :stop],
-    [:altar, :ai, :generate, :exception],
-    [:altar, :ai, :embed, :start],
-    [:altar, :ai, :embed, :stop],
-    [:altar, :ai, :embed, :exception],
-    [:altar, :ai, :classify, :start],
-    [:altar, :ai, :classify, :stop],
-    [:altar, :ai, :classify, :exception],
-    [:altar, :ai, :batch_embed, :start],
-    [:altar, :ai, :batch_embed, :stop],
-    [:altar, :ai, :batch_embed, :exception]
+    [:portfolio_index, :llm, :complete, :start],
+    [:portfolio_index, :llm, :complete, :stop],
+    [:portfolio_index, :llm, :complete, :exception],
+    [:portfolio_index, :llm, :stream, :start],
+    [:portfolio_index, :llm, :stream, :stop],
+    [:portfolio_index, :llm, :stream, :exception],
+    [:portfolio_index, :embedder, :embed],
+    [:portfolio_index, :embedder, :embed_batch]
   ]
+
+  @event_mapping %{
+    [:portfolio_index, :llm, :complete, :start] => [:synapse, :ai, :generate, :start],
+    [:portfolio_index, :llm, :complete, :stop] => [:synapse, :ai, :generate, :stop],
+    [:portfolio_index, :llm, :complete, :exception] => [:synapse, :ai, :generate, :exception],
+    [:portfolio_index, :llm, :stream, :start] => [:synapse, :ai, :stream, :start],
+    [:portfolio_index, :llm, :stream, :stop] => [:synapse, :ai, :stream, :stop],
+    [:portfolio_index, :llm, :stream, :exception] => [:synapse, :ai, :stream, :exception],
+    [:portfolio_index, :embedder, :embed] => [:synapse, :ai, :embed, :stop],
+    [:portfolio_index, :embedder, :embed_batch] => [:synapse, :ai, :batch_embed, :stop]
+  }
 
   @doc """
   Attaches the telemetry bridge.
@@ -76,18 +81,16 @@ defmodule Synapse.AI.Telemetry do
   end
 
   @doc false
-  def handle_event([:altar, :ai | rest], measurements, metadata, _config) do
-    # Forward to Synapse namespace
-    synapse_event = [:synapse, :ai | rest]
+  def handle_event(event, measurements, metadata, _config) do
+    synapse_evt = synapse_event(event)
 
-    # Add synapse-specific metadata
     enhanced_metadata =
       Map.merge(metadata, %{
         source: :synapse_ai,
-        forwarded_from: [:altar, :ai | rest]
+        forwarded_from: event
       })
 
-    :telemetry.execute(synapse_event, measurements, enhanced_metadata)
+    :telemetry.execute(synapse_evt, measurements, enhanced_metadata)
   end
 
   @doc """
@@ -98,18 +101,24 @@ defmodule Synapse.AI.Telemetry do
   end
 
   @doc """
-  Returns the corresponding Synapse event name for an Altar event.
+  Returns the corresponding Synapse event name for a portfolio_index event.
 
   ## Examples
 
-      iex> Synapse.AI.Telemetry.synapse_event([:altar, :ai, :generate, :stop])
+      iex> Synapse.AI.Telemetry.synapse_event([:portfolio_index, :llm, :complete, :stop])
       [:synapse, :ai, :generate, :stop]
   """
-  def synapse_event([:altar, :ai | rest]) do
-    [:synapse, :ai | rest]
-  end
-
   def synapse_event(event) do
-    event
+    case Map.get(@event_mapping, event) do
+      nil ->
+        # Fallback: replace :portfolio_index prefix with :synapse, :ai
+        case event do
+          [:portfolio_index | rest] -> [:synapse, :ai | rest]
+          other -> other
+        end
+
+      mapped ->
+        mapped
+    end
   end
 end

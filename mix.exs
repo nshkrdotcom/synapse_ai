@@ -47,14 +47,17 @@ defmodule Synapse.AI.MixProject do
   defp deps do
     [
       # Core dependencies (path for dev, will be hex for release)
-      {:altar_ai, "~> 0.1.0"},
-      {:synapse, "~> 0.1.0"},
-      {:jido, "~> 1.0"},
+      {:portfolio_core, path: "../portfolio_core"},
+      {:portfolio_index, path: "../portfolio_index"},
+      {:synapse, path: "../synapse"},
+      {:jido, github: "agentjido/jido", branch: "main", override: true},
+      {:jido_action, github: "agentjido/jido_action", branch: "main", override: true},
+      {:jido_signal, github: "agentjido/jido_signal", branch: "main", override: true},
 
       # Test dependencies
       {:stream_data, "~> 1.0", only: :test},
-      {:supertester, path: "../supertester", only: :test},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:supertester, "~> 0.4.0", only: :test},
+      {:ex_doc, "~> 0.40.0", only: :dev, runtime: false},
       {:excoveralls, "~> 0.18", only: :test},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
@@ -63,8 +66,8 @@ defmodule Synapse.AI.MixProject do
 
   defp description do
     """
-    Synapse integration for altar_ai - SDK-backed LLM providers for multi-agent workflows.
-    Provides unified adapter layer for Gemini, Claude, and Codex with automatic fallback,
+    Synapse integration for portfolio_core/portfolio_index - SDK-backed LLM providers for multi-agent workflows.
+    Provides unified adapter layer for Gemini, Claude, Codex, OpenAI, and Ollama with automatic fallback,
     workflow actions, signal handlers, and telemetry bridging.
     """
   end

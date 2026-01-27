@@ -1,7 +1,11 @@
 defmodule Synapse.AI.Test.MockAdapter do
   @moduledoc """
   Mock adapter for testing synapse_ai without real API calls.
+
+  Implements the `PortfolioCore.Ports.LLM` behaviour for use in tests.
   """
+
+  @behaviour PortfolioCore.Ports.LLM
 
   defstruct [:config, :responses]
 
@@ -14,83 +18,46 @@ defmodule Synapse.AI.Test.MockAdapter do
 
   def available?, do: true
 
-  def generate(%__MODULE__{responses: responses}, prompt, _opts) do
-    case Map.get(responses, :generate) do
-      nil ->
-        {:ok,
-         %Altar.AI.Response{
-           content: "Mock response for: #{prompt}",
-           provider: :mock,
-           model: "mock-model",
-           tokens: %{total: 10, prompt: 5, completion: 5},
-           finish_reason: :stop
-         }}
+  @impl true
+  def complete(messages, opts \\ []) do
+    prompt =
+      case messages do
+        [%{content: content} | _] -> content
+        _ -> ""
+      end
 
+    {:ok,
+     %{
+       content: "Mock response for: #{prompt}",
+       model: Keyword.get(opts, :model, "mock-model"),
+       usage: %{input_tokens: 5, output_tokens: 5},
+       finish_reason: :stop
+     }}
+  end
+
+  @impl true
+  def stream(messages, opts \\ []) do
+    case complete(messages, opts) do
       {:ok, response} ->
-        {:ok, response}
+        {:ok, [response.content]}
 
-      {:error, error} ->
-        {:error, error}
-
-      fun when is_function(fun, 1) ->
-        fun.(prompt)
+      error ->
+        error
     end
   end
 
-  def classify(%__MODULE__{responses: responses}, text, labels, _opts) do
-    case Map.get(responses, :classify) do
-      nil ->
-        # Default: return first label with 0.9 confidence
-        {:ok,
-         %{
-           label: List.first(labels),
-           confidence: 0.9,
-           all_scores: Enum.into(labels, %{}, fn label -> {label, 0.9 / length(labels)} end)
-         }}
-
-      {:ok, classification} ->
-        {:ok, classification}
-
-      {:error, error} ->
-        {:error, error}
-
-      fun when is_function(fun, 2) ->
-        fun.(text, labels)
-    end
+  @impl true
+  def supported_models do
+    ["mock-model"]
   end
 
-  def embed(%__MODULE__{responses: responses}, text, _opts) do
-    case Map.get(responses, :embed) do
-      nil ->
-        # Default: return random vector
-        {:ok, Enum.map(1..128, fn _ -> :rand.uniform() end)}
-
-      {:ok, vector} ->
-        {:ok, vector}
-
-      {:error, error} ->
-        {:error, error}
-
-      fun when is_function(fun, 1) ->
-        fun.(text)
-    end
-  end
-
-  def batch_embed(%__MODULE__{responses: responses}, texts, _opts) do
-    case Map.get(responses, :batch_embed) do
-      nil ->
-        # Default: return random vectors for each text
-        vectors = Enum.map(texts, fn _ -> Enum.map(1..128, fn _ -> :rand.uniform() end) end)
-        {:ok, vectors}
-
-      {:ok, vectors} ->
-        {:ok, vectors}
-
-      {:error, error} ->
-        {:error, error}
-
-      fun when is_function(fun, 1) ->
-        fun.(texts)
-    end
+  @impl true
+  def model_info(_model) do
+    {:ok,
+     %{
+       name: "mock-model",
+       context_window: 4096,
+       max_output_tokens: 1024
+     }}
   end
 end
